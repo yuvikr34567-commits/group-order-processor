@@ -1,7 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { GoogleGenerativeAI } from '@google/generative-ai'
-
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY!)
 
 export async function POST(request: NextRequest) {
   try {
@@ -32,29 +29,16 @@ export async function POST(request: NextRequest) {
 }
 
 async function processPDFs(files: File[]) {
-  // Try different model names - Gemini API has different naming conventions
-  let model;
-  try {
-    // Try gemini-pro first (most common)
-    model = genAI.getGenerativeModel({ model: 'gemini-pro' })
-  } catch (e) {
-    try {
-      // Fallback to gemini-1.5-flash
-      model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
-    } catch (e2) {
-      // Last resort: try gemini-1.5-pro
-      model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' })
-    }
-  }
-
-  // Convert PDFs to base64 for Gemini
+  // Convert PDFs to base64
   const pdfDataPromises = files.map(async (file) => {
     const bytes = await file.arrayBuffer()
     const base64 = Buffer.from(bytes).toString('base64')
     return {
-      inlineData: {
-        data: base64,
-        mimeType: 'application/pdf'
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: 'application/pdf',
+        data: base64
       }
     }
   })
@@ -119,11 +103,44 @@ IMPORTANT:
 - Extract ALL guest orders from labels or tables
 - Be thorough and accurate
 - If information is missing, use null
+- Return ONLY the JSON, no other text
 `
 
-  const result = await model.generateContent([prompt, ...pdfData])
-  const response = await result.response
-  const text = response.text()
+  // Use OpenRouter API with Claude
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://group-order-processor.vercel.app',
+      'X-Title': 'Group Order Processor'
+    },
+    body: JSON.stringify({
+      model: 'anthropic/claude-3.5-sonnet', // Using Claude 3.5 Sonnet - excellent for document analysis
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: prompt
+            },
+            ...pdfData
+          ]
+        }
+      ],
+      temperature: 0.1, // Low temperature for consistent extraction
+      max_tokens: 4000
+    })
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(`OpenRouter API error: ${error}`)
+  }
+
+  const result = await response.json()
+  const text = result.choices[0].message.content
 
   // Extract JSON from response
   const jsonMatch = text.match(/\{[\s\S]*\}/)
