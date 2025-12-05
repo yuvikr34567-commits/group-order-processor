@@ -32,8 +32,20 @@ export async function POST(request: NextRequest) {
 }
 
 async function processPDFs(files: File[]) {
-  // Use gemini-1.5-flash instead of pro - it's more widely available and faster
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+  // Try different model names - Gemini API has different naming conventions
+  let model;
+  try {
+    // Try gemini-pro first (most common)
+    model = genAI.getGenerativeModel({ model: 'gemini-pro' })
+  } catch (e) {
+    try {
+      // Fallback to gemini-1.5-flash
+      model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+    } catch (e2) {
+      // Last resort: try gemini-1.5-pro
+      model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' })
+    }
+  }
 
   // Convert PDFs to base64 for Gemini
   const pdfDataPromises = files.map(async (file) => {
